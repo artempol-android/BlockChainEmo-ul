@@ -8,17 +8,17 @@ class Node:
     max_int = sys.maxsize
     difficult = "0000"
 
-    def __init__(self, nonce_mode=0):
+    def __init__(self, nonce_mode="0"):
         self.__chain = []
         self.mode = nonce_mode
 
     def nextNonce(self, nonce):
-        if self.mode == 0:
+        if self.mode == "0":
             if nonce == self.max_int:
                 nonce = - self.max_int
             else:
                 nonce += 1
-        elif self.mode == 1:
+        elif self.mode == "1":
             if nonce == - self.max_int:
                 nonce = self.max_int
             else:
