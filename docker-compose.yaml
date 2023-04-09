@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  service1:
+    image: emo-chain
+    container_name: service1
+    environment:
+      NONCE_MODE: 0
+      PORT: 8080
+      NEIGHBORS: service2:8081,service3:8082
+
+  service2:
+    image: emo-chain
+    container_name: service2
+    environment:
+      NONCE_MODE: 1
+      PORT: 8081
+      NEIGHBORS: service1:8080,service3:8082
+
+  service3:
+    image: emo-chain
+    container_name: service3
+    environment:
+      NONCE_MODE: 2
+      PORT: 8082
+      NEIGHBORS: service1:8080,service2:8081
+      MASTER: true
+    depends_on:
+      - service1
+      - service2

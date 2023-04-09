@@ -11,15 +11,15 @@ t = threading.Thread(target=node.chainBuild)
 
 host = '0.0.0.0'
 port = 8080
-neighbours = [8081, 8082]
+neighbors = [8081, 8082]
 master_mode = False
 
 if 'PORT' in os.environ:
     port = int(os.environ['PORT'])
     node.port = port
-if 'NEIGHBOURS' in os.environ:
-    neighbours = os.environ['NEIGHBOURS'].split(',')
-    node.neighbours = neighbours
+if 'NEIGHBORS' in os.environ:
+    neighbors = os.environ['NEIGHBORS'].split(',')
+    node.neighbors = neighbors
 if 'NONCE_MODE' in os.environ:
     node.mode = os.environ['NONCE_MODE']
 if 'MASTER' in os.environ:

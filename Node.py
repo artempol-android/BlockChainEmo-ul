@@ -14,7 +14,7 @@ lock = threading.Lock()
 class Node:
     max_int = sys.maxsize
     difficult = "0000"
-    neighbours = ["127.0.0.1:8081", "127.0.0.1:8082"]
+    neighbors = ["127.0.0.1:8081", "127.0.0.1:8082"]
     port = 8080
     stop = True
 
@@ -93,7 +93,7 @@ class Node:
             return self.__chain[index - 1]
 
     def distribute(self, block):
-        for neighbour in self.neighbours:
+        for neighbour in self.neighbors:
             try:
                 requests.post("http://{}/add_block".format(neighbour), json={"index": block.index,
                                                                              "prev_hash": block.prev_hash,
