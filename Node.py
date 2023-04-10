@@ -1,60 +1,61 @@
 import copy
+import hashlib
 import random
 import string
 import sys
-import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from json import JSONDecodeError
 
 import requests
 
-lock = threading.Lock()
+lock = threading.RLock()
 
 
 class Node:
     max_int = sys.maxsize
-    difficult = "0000"
+    difficult = "00000"
     neighbors = ["127.0.0.1:8081", "127.0.0.1:8082"]
     port = 8080
-    stop = True
+    stop = False
+    nonce = 0
 
     def __init__(self, nonce_mode="0"):
         self.__chain = []
         self.mode = nonce_mode
 
     def getLastIndex(self):
-        with lock:
-            return len(self.__chain)
+        return len(self.__chain)
 
-    def nextNonce(self, nonce):
+    def nextNonce(self):
         if self.mode == "0":
-            if nonce == self.max_int:
-                nonce = - self.max_int
+            if self.nonce == self.max_int:
+                self.nonce = - self.max_int
             else:
-                nonce += 1
+                self.nonce += 1
         elif self.mode == "1":
-            if nonce == - self.max_int:
-                nonce = self.max_int
+            if self.nonce == - self.max_int:
+                self.nonce = self.max_int
             else:
-                nonce -= 1
+                self.nonce -= 1
         else:
-            nonce = random.randint(-self.max_int, self.max_int)
-        return nonce
+            self.nonce = random.randint(-self.max_int, self.max_int)
 
     def generateBlock(self):
         prev_hash = ''
         index = 1
-        nonce = 0
-        if len(self.__chain) != 0:
-            prev_hash = self.__chain[-1].hash
-            index = self.__chain[-1].index + 1
-        data = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(256))
-        block_hash = hashlib.sha256((str(index) + prev_hash + data + str(nonce)).encode('utf-8')).hexdigest()
-        while not block_hash.endswith(self.difficult) and not self.stop:
-            nonce = self.nextNonce(nonce)
-            block_hash = hashlib.sha256((str(index) + prev_hash + data + str(nonce)).encode('utf-8')).hexdigest()
-        new_block = Block(index, prev_hash, data, nonce, block_hash)
-        return new_block
+        with lock:
+            if len(self.__chain) != 0:
+                prev_hash = self.__chain[-1].hash
+                index = self.__chain[-1].index + 1
+            data = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(256))
+            block_hash = hashlib.sha256((str(index) + prev_hash + data + str(self.nonce)).encode('utf-8')).hexdigest()
+            while not block_hash.endswith(self.difficult) and not self.stop:
+                self.nextNonce()
+                block_hash = hashlib.sha256(
+                    (str(index) + prev_hash + data + str(self.nonce)).encode('utf-8')).hexdigest()
+            new_block = Block(index, prev_hash, data, self.nonce, block_hash)
+            return new_block
 
     def addBlock(self, block):
         with lock:
@@ -74,35 +75,40 @@ class Node:
         with lock:
             if hashlib.sha256((str(block.index) + block.prev_hash + block.data + str(block.nonce)).encode(
                     'utf-8')).hexdigest() != block.hash or \
-                    not block.hash.endswith(self.difficult) or \
-                    len(self.__chain) > 0 and (block.prev_hash != self.__chain[-1].hash or
-                                               block.index != self.__chain[-1].index + 1):
+                    not block.hash.endswith(self.difficult):
                 return False
-        return True
+            if block.index > 1:
+                if len(self.__chain) > 0:
+                    if block.index > len(self.__chain) + 1 or \
+                            block.prev_hash != self.__chain[int(block.index) - 2].hash or \
+                            block.index != self.__chain[int(block.index) - 2].index + 1:
+                        return False
+                else:
+                    return False
+            return True
 
     def addBlockWithCheck(self, block):
-        if self.checkBlock(block):
-            self.addBlock(block)
-            return True
-        return False
+        with lock:
+            if self.checkBlock(block):
+                return self.addBlock(block)
+            return False
 
     def getBlockFromChain(self, index):
-        with lock:
-            if index < 1 or index > len(self.__chain) + 1:
-                raise ValueError
-            return self.__chain[index - 1]
+        if index < 1 or index > len(self.__chain):
+            raise ValueError
+        return self.__chain[index - 1]
+
+    def sendIndexReq(self, link, json):
+        try:
+            requests.post(link, json=json)
+        except Exception as e:
+            print(e)
 
     def distribute(self, block):
-        for neighbour in self.neighbors:
-            try:
-                requests.post("http://{}/add_block".format(neighbour), json={"index": block.index,
-                                                                             "prev_hash": block.prev_hash,
-                                                                             "data": block.data,
-                                                                             "nonce": block.nonce,
-                                                                             "hash": block.hash,
-                                                                             "port": self.port})
-            except Exception as e:
-                print(e)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            [executor.submit(self.sendIndexReq, "http://{}/add_block".format(neighbour),
+                             json={"index": block.index, "port": self.port}) for neighbour in
+             self.neighbors]
 
     def chainBuild(self):
         while not self.stop:
@@ -110,47 +116,49 @@ class Node:
             res = self.addBlockWithCheck(block)
             if res:
                 print("self generated: {}".format(block))
-                self.distribute(block)
+                distributor = threading.Thread(target=self.distribute, args=(block,))
+                distributor.start()
 
     def fixMinority(self, index, s_ip, s_port):
-        stack = []
-        temp_index = index
-        dump_chain = copy.deepcopy(self.__chain)
-        while temp_index > 0:
-            result = requests.get("http://{}:{}/get_block".format(s_ip, s_port), params={'index': temp_index})
-            try:
-                block_data = result.json()
-            except JSONDecodeError:
-                self.__chain = dump_chain
-                return False
-            block = Block(block_data['index'], block_data['prev_hash'], block_data['data'], block_data['nonce'],
-                          block_data['hash'])
-            if not block.checkHash():
-                self.__chain = dump_chain
-                return False
-            if block.index == len(self.__chain) + 1:
+        with lock:
+            stack = []
+            temp_index = index
+            dump_chain = copy.deepcopy(self.__chain)
+            while temp_index > 0:
+                result = requests.get("http://{}:{}/get_block".format(s_ip, s_port), params={'index': temp_index})
+                try:
+                    block_data = result.json()
+                except JSONDecodeError:
+                    self.__chain = dump_chain
+                    return False
+                block = Block(block_data['index'], block_data['prev_hash'], block_data['data'], block_data['nonce'],
+                              block_data['hash'])
+                if not block.checkHash():
+                    self.__chain = dump_chain
+                    return False
+                if block.index == len(self.__chain) + 1:
+                    added = self.addBlockWithCheck(block)
+                    if added:
+                        print("fix minority: {}".format(block))
+                        break
+                    del self.__chain[-1]
+                stack.append(block)
+                temp_index -= 1
+
+            while len(stack) > 0:
+                block = stack.pop()
                 added = self.addBlockWithCheck(block)
-                if added:
+                if not added:
+                    self.__chain = dump_chain
+                    return False
+                else:
                     print("fix minority: {}".format(block))
-                    break
-                del self.__chain[-1]
-            stack.append(block)
-            temp_index -= 1
 
-        while len(stack) > 0:
-            block = stack.pop()
-            added = self.addBlockWithCheck(block)
-            if not added:
+            if len(self.__chain) > len(dump_chain):
+                return True
+            else:
                 self.__chain = dump_chain
                 return False
-            else:
-                print("fix minority: {}".format(block))
-
-        if len(self.__chain) > len(dump_chain):
-            return True
-        else:
-            self.__chain = dump_chain
-            return False
 
 
 class Block:

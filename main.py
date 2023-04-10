@@ -3,7 +3,7 @@ import threading
 
 from flask import Flask, request, jsonify
 
-from Node import Node, Block
+from Node import Node
 
 app = Flask(__name__)
 node = Node()
@@ -38,7 +38,7 @@ def hello():
 def add_block():
     global t
     block_data = request.json
-    if block_data['index'] > node.getLastIndex() + 1:
+    if block_data['index'] > node.getLastIndex():
         if t.is_alive():
             node.stop = True
             t.join()
@@ -50,18 +50,6 @@ def add_block():
             return "success"
         else:
             return "denied"
-    block = Block(block_data['index'], block_data['prev_hash'], block_data['data'], block_data['nonce'],
-                  block_data['hash'])
-    added = node.addBlockWithCheck(block)
-    if added:
-        print("added from {}: {}".format(block_data['port'], block))
-        if t.is_alive():
-            node.stop = True
-            t.join()
-        t = threading.Thread(target=node.chainBuild)
-        node.stop = False
-        t.start()
-        return "success"
     else:
         return "denied"
 
